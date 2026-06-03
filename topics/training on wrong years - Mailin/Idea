@@ -1,6 +1,9 @@
 Training 1940,1950,... - predicting 2026
 
--Mailin
+-Mailin in timeseries important what you are training on
+	- train on 2026 and then compare prediction for 1940-2020
+	- compare how climate change amoung the time series influences everything
+	- everything on grid data
 
 
 
