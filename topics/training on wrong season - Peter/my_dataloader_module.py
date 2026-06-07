@@ -1,7 +1,17 @@
 #python file to collect all classes and functions related to dataloader generation
+import pandas as pd 
+from pandas import Series, DataFrame 
+from matplotlib import pyplot as plt
+import numpy as np
+import os
+from pathlib import Path
+import torch
+import torch.nn as nn
+from torch.optim import AdamW
 from torch.utils.data import Dataset, DataLoader
 import sklearn
 from sklearn.model_selection import train_test_split
+import xarray as xr
 
 
 class TimeseriesDatasetPipeline:
@@ -75,16 +85,19 @@ class TimeseriesDatasetPipeline:
             raise ValueError("forecast_lag_selection must be provided.")
         
         X, y = [], []
+        idx_skipped=[]
         for i in idx_list:
             #print(f"Processing index {i} with lag selection {self.lag_selection} and forecast horizon {self.forecast_horizon}.")
             #print(f"\nforecast horizon: {self.forecast_horizon}, forecast var: {self.forecast_var}, lag selection: {self.lag_selection}")
             if i+max_lag+self.forecast_horizon >= len(data):
-                print(f"Skipping index {i} due to insufficient data for lag selection and forecast horizon.")
+                #print(f"Skipping index {i} due to insufficient data for lag selection and forecast horizon.")
+                idx_skipped.append(i)
                 continue
             #testing, if there is enough consecutive data for the selected lags and forecast horizon in the time dimension, if not, skip this index
             last_timespan_idx=i+max_lag+self.forecast_horizon
             if self.ds.time[last_timespan_idx].values - self.ds.time[i].values > np.timedelta64(max_lag+self.forecast_horizon, 'h'):
-                print(f"Skipping index {i} due to insufficient consecutive data for forecast horizon.")
+                #print(f"Skipping index {i} due to insufficient consecutive data for forecast horizon.")
+                idx_skipped.append(i)
                 continue
             
             #print("Original data shape:", data.shape)
@@ -103,10 +116,11 @@ class TimeseriesDatasetPipeline:
             #print("yd:", getattr(yd, "shape", None), type(yd))
 
         X = np.array(X) 
-        y = np.array(y)  
+        y = np.array(y)
+        print(f"skipped number of indices: {len(idx_skipped)} out of {len(idx_list)} total indices.") 
         print("X:", X.shape, type(X))   # (samples, lag, variables, space)
         print("y:",y.shape, type(y))    # (samples, horizon, pred variable, space)
-        return X,y
+        return X,y,idx_skipped
 
 
     def create_random_train_test_split_idx(self, test_size=0.2, random_state=None):
@@ -120,8 +134,8 @@ class TimeseriesDatasetPipeline:
     def to_scaled_pytorch_train_test_dataloaders(self, batch_size=32, test_size=0.2, random_state=None):
         """Create PyTorch DataLoader with random train/test split."""
         train_idx, test_idx = self.create_random_train_test_split_idx(test_size=test_size, random_state=random_state)
-        X_train, y_train = self.create_windowed_dataset_from_idxlist(train_idx)
-        X_test, y_test = self.create_windowed_dataset_from_idxlist(test_idx)
+        X_train, y_train, skipped_idx_list_train= self.create_windowed_dataset_from_idxlist(train_idx)
+        X_test, y_test, skipped_idx_list_test = self.create_windowed_dataset_from_idxlist(test_idx)
         
         #scale
         X_train_sc, scaler_set = self.scale_X(X_train)
@@ -135,29 +149,29 @@ class TimeseriesDatasetPipeline:
         train_loader = DataLoader(train_dataset, batch_size=batch_size)
         test_loader = DataLoader(test_dataset, batch_size=batch_size)
         
-        return train_loader, test_loader
+        return train_loader, test_loader, skipped_idx_list_train, skipped_idx_list_test, scaler_set, scaler_y
     
 
 
 
     def to_pytorch_dataloader(self, batch_size=32, shuffle=True):
         """Convert to PyTorch DataLoader."""
-        X, y = self.create_windowed_dataset_from_idxlist(list(range(self.data.shape[0] - max(self.lag_selection) - self.forecast_horizon)))
+        X, y, skipped_idx_list = self.create_windowed_dataset_from_idxlist(list(range(self.data.shape[0] - max(self.lag_selection) - self.forecast_horizon)))
         print("dataloader not scaled!")
         dataset = TimeseriesPyTorchDataset(X, y)
-        return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
+        return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle), skipped_idx_list
 
 
-    def to_scaled_pytorch_dataloader(self, batch_size=32, shuffle=True):
+    def to_scaled_pytorch_dataloader(self, batch_size=32, shuffle=True,scaler_set=None, scaler_y=None):
         """Convert to scaled PyTorch DataLoader."""
-        X, y = self.create_windowed_dataset_from_idxlist(list(range(self.data.shape[0] - max(self.lag_selection) - self.forecast_horizon)))
+        X, y, skipped_idx_list = self.create_windowed_dataset_from_idxlist(list(range(self.data.shape[0] - max(self.lag_selection) - self.forecast_horizon)))
         #print("creating scaled dataloader...")
-        X_scaled, scaler_set = self.scale_X(X)
+        X_scaled, scaler_set = self.scale_X(X, scaler_set=scaler_set)
         #print("X scaled with scaler set:", scaler_set)
-        y_scaled, scaler_y = self.scale_y(y)
+        y_scaled, scaler_y = self.scale_y(y, scaler=scaler_y)
         #print("y scaled with scaler y:", scaler_y)
         dataset = TimeseriesPyTorchDataset(X_scaled, y_scaled)
-        return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)#, scaler_set, scaler_y
+        return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle), skipped_idx_list, scaler_set, scaler_y
 
 
 
