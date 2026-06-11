@@ -8,9 +8,3 @@ Building ML models to predict a forecast vector from a timeseries and find out w
 
 ## Data used
 ERA5 (https://cds.climate.copernicus.eu/datasets/reanalysis-era5-pressure-levels?tab=overview)
-
-## Results
-
-![Seasonal Cross Prediciton](topics/training on wrong season - Peter/images/GRU_losses_combined_plots.png)
-
-topics/training on wrong season - Peter/images
